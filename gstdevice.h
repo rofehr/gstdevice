@@ -8,7 +8,7 @@
 class cGstOsd;
 extern cGstOsd *GstOsd;
 
-cGstDevice    *GstDevice;
+cGstDevice*    GstDevice;
 
 // ---- Live stream info (filled by QueryAndUpdateStreamInfo) ----
 struct sGstStreamInfo {
