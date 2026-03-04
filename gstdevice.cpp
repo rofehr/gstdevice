@@ -455,53 +455,6 @@ int cGstDevice::PushBuffer(GstElement *src, const uchar *data, int len)
 }
 
 // ============================================================
-//  PlayTs – main TS delivery (mixed PIDs, auto-detected)
-// ============================================================
-int cGstDevice::PlayTs(const uchar *Data, int Length)
-{
-    if (!Data || Length < kTsPacketSize || !m_running)
-        return Length;
-
-    if (!m_videoParser)
-        InitTsParsers();
-
-    const uchar *p   = Data;
-    int          rem = Length;
-
-    while (rem >= kTsPacketSize) {
-        if (p[0] != kTsSyncByte) { ++p; --rem; continue; }
-
-        int pid = ((p[1] & 0x1F) << 8) | p[2];
-
-        // Auto-detect PIDs from PES stream_id when PUSI is set
-        if ((m_videoPid == -1 || m_audioPid == -1) && (p[1] & 0x40)) {
-            bool  hasAdapt = (p[3] & 0x20) != 0;
-            int   pesOff   = 4 + (hasAdapt ? 1 + p[4] : 0);
-            if (pesOff + 3 < kTsPacketSize) {
-                const uchar *pes = p + pesOff;
-                if (pes[0] == 0x00 && pes[1] == 0x00 && pes[2] == 0x01) {
-                    uint8_t sid = pes[3];
-                    if (sid >= 0xE0 && sid <= 0xEF && m_videoPid == -1) {
-                        m_videoPid = pid;
-                        dsyslog("[gstreamer] Video PID %d (stream_id=0x%02X)", pid, sid);
-                    } else if (sid >= 0xC0 && sid <= 0xDF && m_audioPid == -1) {
-                        m_audioPid = pid;
-                        dsyslog("[gstreamer] Audio PID %d (stream_id=0x%02X)", pid, sid);
-                    }
-                }
-            }
-        }
-
-        if      (pid == m_videoPid && m_videoParser) m_videoParser->Feed(p);
-        else if (pid == m_audioPid && m_audioParser) m_audioParser->Feed(p);
-
-        p   += kTsPacketSize;
-        rem -= kTsPacketSize;
-    }
-    return Length;
-}
-
-// ============================================================
 //  PlayTsVideo – VDR pre-filtered single-PID video packets
 // ============================================================
 int cGstDevice::PlayTsVideo(const uchar *Data, int Length)
