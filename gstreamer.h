@@ -43,7 +43,7 @@
 #define PLUGIN_DESCRIPTION "GStreamer output plugin for VDR (H.264/H.265, VA-API, AAC)"
 
 // Forward declarations of global singletons (defined in gstreamer.cpp)
-class cGstDevice;
-class cGstOsd;
-extern cGstDevice    GstDevice;
-extern cGstOsd       GstOsd;
+//class cGstDevice;
+//class cGstOsd;
+//extern cGstDevice    GstDevice;
+//extern cGstOsd       GstOsd;
