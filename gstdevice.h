@@ -147,4 +147,5 @@ private:
     void HandleBusMessage(GstMessage *msg);
 };
 
+class cGstDevice;
 extern cGstDevice    *GstDevice;
