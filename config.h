@@ -51,7 +51,7 @@ public:
 
 // ============================================================
 //  sGstStreamInfo – live stream properties (filled by the device,
-//  consumed by the OSD).  Lives here so globals.h can include
+//  consumed by the OSD).
 //  config.h alone without pulling in all of gstdevice.h.
 // ============================================================
 struct sGstStreamInfo {
@@ -68,3 +68,4 @@ struct sGstStreamInfo {
 };
 
 extern cGstConfig GstConfig;
+extern sGstStreamInfo GstStreamInfo;

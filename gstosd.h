@@ -2,7 +2,6 @@
 
 #include "gstreamer.h"
 #include "config.h"
-#include "globals.h"
 
 // ============================================================
 //  cGstOsd
@@ -88,3 +87,5 @@ private:
     static constexpr tColor kSwBadge  = 0xFFE67E22;   // orange = Software
 };
 
+// Global OSD singleton (created in cPluginGstreamer::Initialize)
+extern cGstOsd *GstOsd;

@@ -9,12 +9,13 @@
 #include <cstring>
 #include <cstdlib>
 
-
 // ============================================================
 //  Global singletons
 // ============================================================
 cGstConfig    GstConfig;
 sGstStreamInfo GstStreamInfo;
+cGstDevice   *GstOutputDevice = nullptr;
+cGstOsd      *GstOsd    = nullptr;
 
 // ============================================================
 //  cPluginGstreamer – VDR plugin class
@@ -116,7 +117,7 @@ bool cPluginGstreamer::Initialize()
     isyslog("[gstreamer] GStreamer %u.%u.%u.%u", maj, min, mic, nano);
 
     // Create output device (registers itself with VDR automatically)
-    GstDevice = new cGstDevice();
+    GstOutputDevice = new cGstDevice();
 
     // Create OSD handler
     GstOsd = new cGstOsd();
@@ -131,7 +132,7 @@ bool cPluginGstreamer::Initialize()
 // ============================================================
 bool cPluginGstreamer::Start()
 {
-    if (GstDevice && !GstDevice->InitPipeline()) {
+    if (GstOutputDevice && !GstOutputDevice->InitPipeline()) {
         esyslog("[gstreamer] Pipeline initialisation failed");
         return false;
     }
@@ -147,11 +148,11 @@ void cPluginGstreamer::Stop()
         delete GstOsd;
         GstOsd = nullptr;
     }
-    if (GstDevice) {
-        GstDevice->DestroyPipeline();
+    if (GstOutputDevice) {
+        GstOutputDevice->DestroyPipeline();
         // cDevice is not heap-deleted; VDR manages device lifetime
         // via the cDevice list.  Just null the pointer here.
-        GstDevice = nullptr;
+        GstOutputDevice = nullptr;
     }
     gst_deinit();
     isyslog("[gstreamer] Plugin stopped");
@@ -199,7 +200,7 @@ bool cPluginGstreamer::Service(const char *Id, void * /*Data*/)
     // "GstreamerReconfigure" – called by external plugins to trigger
     // a live pipeline rebuild after changing GstConfig directly
     if (strcmp(Id, "GstreamerReconfigure") == 0) {
-        if (GstDevice) GstDevice->ReconfigurePipeline();
+        if (GstOutputDevice) GstOutputDevice->ReconfigurePipeline();
         return true;
     }
     return false;

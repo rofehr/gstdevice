@@ -3,7 +3,6 @@
 #include "gstreamer.h"
 #include "config.h"
 #include "tsparser.h"
-#include "globals.h"
 
 // ---- Live stream info (filled by QueryAndUpdateStreamInfo) ----
 // ============================================================
@@ -130,3 +129,6 @@ private:
     static GstBusSyncReply BusSyncHandler(GstBus *, GstMessage *, gpointer);
     void HandleBusMessage(GstMessage *msg);
 };
+
+// Global device singleton (created in cPluginGstreamer::Initialize)
+extern cGstDevice *GstOutputDevice;
