@@ -6,7 +6,7 @@
 
 // forward declaration
 class cGstOsd;
-extern cGstOsd GstOsd;
+extern cGstOsd *GstOsd;
 
 // ---- Live stream info (filled by QueryAndUpdateStreamInfo) ----
 struct sGstStreamInfo {
