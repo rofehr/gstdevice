@@ -51,7 +51,6 @@ public:
     // TS packet paths – VDR 2.2+ primary delivery mechanism
     // PlayTs   : mixed TS buffer (PIDs auto-detected)
     // PlayTsVideo / PlayTsAudio: pre-filtered single-PID packets from VDR
-    virtual int     PlayTs(const uchar *Data, int Length) override;
     virtual int     PlayTsVideo(const uchar *Data, int Length) override;
     virtual int     PlayTsAudio(const uchar *Data, int Length) override;
 
