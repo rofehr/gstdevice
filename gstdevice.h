@@ -2,25 +2,40 @@
 
 #include "gstreamer.h"
 #include "config.h"
-#include "gstosd.h"
 #include "tsparser.h"
 
-#include <memory>
+// forward declaration
+class cGstOsd;
+extern cGstOsd *GstOsd;
+
+// ---- Live stream info (filled by QueryAndUpdateStreamInfo) ----
+struct sGstStreamInfo {
+    std::string videoCodec;
+    int         videoWidth        = 0;
+    int         videoHeight       = 0;
+    double      videoFps          = 0.0;
+    bool        hwDecode          = false;
+    std::string audioCodec;
+    int         audioSampleRate   = 0;
+    int         audioChannels     = 0;
+    std::string pipelineState;       // "Playing" | "Paused" | "Buffering"
+    int         bufferingPercent  = 0;
+};
+extern sGstStreamInfo GstStreamInfo;
 
 // ============================================================
-//  cGstDevice – VDR output device backed by a GStreamer pipeline
-//  Supports: H.264, H.265/HEVC video | AAC, MP3 audio
-//            VA-API hardware decode  | configurable A/V sync offset
+//  cGstDevice
 // ============================================================
 class cGstDevice : public cDevice
 {
 public:
     cGstDevice();
-    virtual ~cGstDevice();
+    virtual ~cGstDevice() override;
 
-    // --- cDevice interface ---
-    virtual bool    HasDecoder()       const override { return true; }
-    virtual bool    CanReplay()        const override { return true; }
+    // ---- cDevice interface ----
+    virtual bool    HasDecoder()  const override { return true; }
+    virtual bool    CanReplay()   const override { return true; }
+
     virtual bool    SetPlayMode(ePlayMode PlayMode) override;
     virtual void    TrickSpeed(int Speed, bool Forward) override;
     virtual void    Clear() override;
@@ -28,105 +43,107 @@ public:
     virtual void    Freeze() override;
     virtual void    Mute() override;
     virtual void    SetVolumeDevice(int Volume) override;
+
+    // Legacy ES data path (used by some replay modes)
     virtual int     PlayVideo(const uchar *Data, int Length) override;
     virtual int     PlayAudio(const uchar *Data, int Length, uchar Id) override;
+
+    // TS packet paths – VDR 2.2+ primary delivery mechanism
+    // PlayTs   : mixed TS buffer (PIDs auto-detected)
+    // PlayTsVideo / PlayTsAudio: pre-filtered single-PID packets from VDR
+    virtual int     PlayTs(const uchar *Data, int Length) override;
     virtual int     PlayTsVideo(const uchar *Data, int Length) override;
     virtual int     PlayTsAudio(const uchar *Data, int Length) override;
-
-    // ---- Full TS packet path (called by VDR for live TV and recordings) ----
-    // VDR delivers one or more complete 188-byte TS packets per call.
-    // We demux here and push the resulting ES + PTS into appsrc.
-    virtual int     PlayTs(const uchar *Data, int Length) override;
 
     virtual bool    Poll(cPoller &Poller, int TimeoutMs = 0) override;
     virtual bool    Flush(int TimeoutMs = 0) override;
     virtual int64_t GetSTC() override;
 
-    // Pipeline control
+    // ---- OSD integration ----
+    // Called by VDR on every channel switch
+    virtual void    SetChannelDevice(const cChannel *Channel, bool LiveView) override;
+
+    // Called by the plugin's key handler
+    eOSState        ProcessKey(eKeys Key);
+
+    // ---- Pipeline control (called from cPluginGstreamer) ----
     bool InitPipeline();
     void DestroyPipeline();
-    void ReconfigurePipeline();   // called after OSD config change
+    void ReconfigurePipeline();
     bool IsRunning() const { return m_running.load(); }
-
-    // --- OSD integration ---
-    // Called by VDR when the user switches channels
-    virtual void SetChannelDevice(const cChannel *Channel, bool LiveView) override;
-    // Called by VDR to deliver remote-control keys to the device
-    virtual bool HasIBPFrames() const override { return false; }
-    eOSState ProcessKey(eKeys Key);
 
 private:
     // ---- GStreamer elements ----
-    GstElement  *m_pipeline    = nullptr;
+    GstElement *m_pipeline    = nullptr;
 
-    // Video branch
-    GstElement  *m_videoSrc    = nullptr;   // appsrc
-    GstElement  *m_videoParse  = nullptr;   // h264parse / h265parse
-    GstElement  *m_videoDec    = nullptr;   // vaapih264dec / avdec_h264 etc.
-    GstElement  *m_videoConv   = nullptr;   // videoconvert (SW path)
-    GstElement  *m_videoSink   = nullptr;   // vaapisink / autovideosink
+    // Video branch: appsrc → parse → decode → [convert] → sink
+    GstElement *m_videoSrc    = nullptr;
+    GstElement *m_videoParse  = nullptr;
+    GstElement *m_videoDec    = nullptr;
+    GstElement *m_videoConv   = nullptr;   // only in SW path
+    GstElement *m_videoSink   = nullptr;
 
-    // Audio branch
-    GstElement  *m_audioSrc    = nullptr;   // appsrc
-    GstElement  *m_audioParse  = nullptr;   // aacparse / mpegaudioparse
-    GstElement  *m_audioDec    = nullptr;   // avdec_aac / avdec_mp3
-    GstElement  *m_audioConv   = nullptr;   // audioconvert
-    GstElement  *m_audioResamp = nullptr;   // audioresample
-    GstElement  *m_audioSync   = nullptr;   // identity (tsoffset for A/V sync)
-    GstElement  *m_audioSink   = nullptr;   // autoaudiosink / alsasink
+    // Audio branch: appsrc → parse → decode → convert → resample → identity → sink
+    GstElement *m_audioSrc    = nullptr;
+    GstElement *m_audioParse  = nullptr;
+    GstElement *m_audioDec    = nullptr;
+    GstElement *m_audioConv   = nullptr;
+    GstElement *m_audioResamp = nullptr;
+    GstElement *m_audioSync   = nullptr;   // identity – carries ts-offset
+    GstElement *m_audioSink   = nullptr;
 
-    GstBus      *m_bus         = nullptr;
+    GstBus     *m_bus         = nullptr;
 
-    // ---- State ----
-    ePlayMode    m_playMode    = pmNone;
+    // ---- Playback state ----
+    ePlayMode   m_playMode = pmNone;
     std::atomic<bool> m_running{false};
-    std::mutex   m_mutex;
+    std::mutex  m_mutex;
 
-    // Config snapshot active in current pipeline (detect changes)
-    int          m_activeVideoCodec  = -1;
-    bool         m_activeHwDecode    = false;
-    int          m_activeAudioCodec  = -1;
-    int          m_activeAudioOffset = 0;
-
-    // ---- Internal helpers ----
-    bool BuildPipeline();
-    void TeardownPipeline();
-    bool CreateVideoElements();
-    bool CreateAudioElements();
-    void ApplyAudioOffset(int offsetMs);
-    void ApplyVolume(int vol);
-
-    // Push a raw ES buffer (already demuxed) with PTS into appsrc
-    int  PushEs(GstElement *src, const uint8_t *data, int len, GstClockTime pts);
-
-    // Legacy ES path (PlayVideo / PlayAudio) – no PTS available
-    int  PushBuffer(GstElement *src, const uchar *data, int len);
-
-    static GstBusSyncReply BusSyncHandler(GstBus *bus, GstMessage *msg, gpointer data);
-    void HandleBusMessage(GstMessage *msg);
-
-    // Queries GStreamer pipeline for current stream properties
-    // and pushes them to the OSD
-    void QueryAndUpdateStreamInfo();
+    // Active pipeline config snapshot (for change detection)
+    int  m_activeVideoCodec  = -1;
+    bool m_activeHwDecode    = false;
+    int  m_activeAudioCodec  = -1;
+    int  m_activeAudioOffset = 0;
 
     // ---- TS demux state ----
-    // Tracked PIDs (set by VDR via SetPid / detected from first TS packet)
     int  m_videoPid = -1;
     int  m_audioPid = -1;
-
-    // One parser per elementary stream
     std::unique_ptr<cTsParser> m_videoParser;
     std::unique_ptr<cTsParser> m_audioParser;
 
-    // Running PTS wrap-around counter (33-bit PTS rolls over ~26.5 h)
+    // PTS normalisation state (handles 33-bit wrap-around and discontinuities)
     GstClockTime m_videoBasePts = GST_CLOCK_TIME_NONE;
     GstClockTime m_audioBasePts = GST_CLOCK_TIME_NONE;
     GstClockTime m_lastVideoPts = GST_CLOCK_TIME_NONE;
     GstClockTime m_lastAudioPts = GST_CLOCK_TIME_NONE;
 
-    // PTS discontinuity threshold: 500 ms jump → treat as wrap / seek
-    static constexpr GstClockTime kPtsDiscontinuityThreshold = 500 * GST_MSECOND;
+    static constexpr GstClockTime kPtsDiscThreshold = 500 * GST_MSECOND;
 
-    // Resolve PTS wrap-around and discontinuities, returns monotonic ns timestamp
-    GstClockTime NormalisePts(GstClockTime raw_ns, GstClockTime &basePts, GstClockTime &lastPts);
+    // ---- Private helpers ----
+    bool BuildPipeline();
+    void TeardownPipeline();
+    bool CreateVideoElements();
+    bool CreateAudioElements();
+    void InitTsParsers();
+    void ResetTsState();
+
+    void ApplyAudioOffset(int ms);
+    void ApplyVolume(int vol);
+
+    // Push a demuxed ES buffer into appsrc, stamping it with pts
+    int  PushEs(GstElement *src, const uint8_t *data, int len, GstClockTime pts);
+
+    // Legacy path: push without PTS
+    int  PushBuffer(GstElement *src, const uchar *data, int len);
+
+    // Normalise 33-bit PTS (ns) to monotonic pipeline timestamps
+    GstClockTime NormalisePts(GstClockTime rawNs,
+                              GstClockTime &basePts,
+                              GstClockTime &lastPts);
+
+    // Query GStreamer caps → fill GstStreamInfo, push to OSD
+    void QueryAndUpdateStreamInfo();
+
+    static GstBusSyncReply BusSyncHandler(GstBus *, GstMessage *, gpointer);
+    void HandleBusMessage(GstMessage *msg);
 };

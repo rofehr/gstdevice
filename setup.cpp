@@ -1,206 +1,148 @@
 #include "setup.h"
+#include "gstdevice.h"   // for GstDevice (extern) + ReconfigurePipeline
 #include "gstosd.h"
-#include <vdr/tools.h>
+
+#include <vdr/plugin.h>
 #include <cstring>
+#include <cstdio>
 
 // ============================================================
-//  Static option arrays
+//  String tables (must match enum order in config.h)
 // ============================================================
-const char * const cGstMenuSetup::kVideoCodecNames[] = {
-    "H.264 (HD)",
-    "H.265 / HEVC (UHD)",
-    nullptr
-};
-
-const char * const cGstMenuSetup::kAudioCodecNames[] = {
-    "AAC",
-    "MP3",
-    nullptr
-};
+const char * const cGstMenuSetup::kVideoCodecNames[] = { "H.264", "H.265/HEVC", nullptr };
+const char * const cGstMenuSetup::kAudioCodecNames[] = { "AAC",   "MP3",        nullptr };
 
 // ============================================================
-//  Constructor
+//  Constructor – copy working values from global config
 // ============================================================
 cGstMenuSetup::cGstMenuSetup()
 {
-    // Copy global config into local working copies
-    m_videoCodec     = GstConfig.VideoCodec;
-    m_hardwareDecode = GstConfig.HardwareDecode ? 1 : 0;
-    m_audioCodec     = GstConfig.AudioCodec;
-    m_audioOffset    = GstConfig.AudioOffset;
-    m_volume         = GstConfig.Volume;
-    m_osdTimeout     = GstConfig.OsdTimeout;
+    m_videoCodec  = GstConfig.VideoCodec;
+    m_hwDecode    = GstConfig.HardwareDecode ? 1 : 0;
+    m_audioCodec  = GstConfig.AudioCodec;
+    m_audioOffset = GstConfig.AudioOffset;
+    m_volume      = GstConfig.Volume;
+    m_osdTimeout  = GstConfig.OsdTimeout;
 
     strncpy(m_videoSink, GstConfig.VideoSink.c_str(), sizeof(m_videoSink) - 1);
     m_videoSink[sizeof(m_videoSink) - 1] = '\0';
-
     strncpy(m_audioSink, GstConfig.AudioSink.c_str(), sizeof(m_audioSink) - 1);
     m_audioSink[sizeof(m_audioSink) - 1] = '\0';
 
-    m_prevVideoCodec     = m_videoCodec;
-    m_prevHardwareDecode = m_hardwareDecode;
+    m_prevVideoCodec = m_videoCodec;
+    m_prevHwDecode   = m_hwDecode;
 
-    SetSection(tr("GStreamer Output Plugin"));
     BuildMenu();
 }
 
 // ============================================================
-//  Menu construction
+//  BuildMenu – construct all menu items
 // ============================================================
 void cGstMenuSetup::BuildMenu()
 {
-    int current = Current();
     Clear();
+    SetTitle(tr("GStreamer Plugin Setup"));
 
-    // ---- Section: Video ----
-    Add(new cOsdItem(tr("--- Video ---"), osUnknown, false));
+    // ---- Video ----
+    Add(new cMenuEditStraItem(tr("Video codec"),        &m_videoCodec, vcCount, kVideoCodecNames));
+    Add(new cMenuEditBoolItem(tr("Hardware decode (VA-API)"), &m_hwDecode));
 
-    Add(new cMenuEditStraItem(tr("Video Codec"),
-        &m_videoCodec,
-        vcCount,
-        kVideoCodecNames));
+    // Show active decoder as read-only info line
+    Add(new cOsdItem(cString::sprintf("%s:	%s  →  %s",
+        tr("Active decoder"),
+        GstConfig.VideoParseName(),
+        GstConfig.VideoDecoderName()), osUnknown, false));
 
-    Add(new cMenuEditBoolItem(tr("Hardware Decode (VA-API)"),
-        &m_hardwareDecode,
-        tr("Software"),
-        tr("VA-API")));
+    // VDR 2.7.7: cMenuEditStrItem(name, value, length)
+    // The 'allowed' character-set parameter was removed in VDR 2.4+
+    Add(new cMenuEditStrItem(tr("Video sink"), m_videoSink, sizeof(m_videoSink)));
 
-    // Show active decoder info (read-only hint)
-    {
-        cGstConfig tmp;
-        tmp.VideoCodec     = m_videoCodec;
-        tmp.HardwareDecode = (m_hardwareDecode != 0);
-        char buf[128];
-        snprintf(buf, sizeof(buf), "%s  →  %s",
-            tmp.VideoParseName(),
-            tmp.VideoDecoderName());
-        cString info = cString::sprintf(tr("  Active decoder: %s"), buf);
-        Add(new cOsdItem(*info, osUnknown, false));
-    }
+    // ---- Audio ----
+    Add(new cOsdItem("", osUnknown, false));   // spacer
+    Add(new cMenuEditStraItem(tr("Audio codec"), &m_audioCodec, acCount, kAudioCodecNames));
+    Add(new cMenuEditStrItem(tr("Audio sink"), m_audioSink, sizeof(m_audioSink)));
 
-    Add(new cMenuEditStrItem(tr("Video Sink"),
-        m_videoSink,
-        sizeof(m_videoSink)));
+    // ---- Sync & Volume ----
+    Add(new cOsdItem("", osUnknown, false));
+    Add(new cMenuEditIntItem(tr("Audio offset (ms)"),  &m_audioOffset, -500, 500));
+    Add(new cMenuEditIntItem(tr("Volume"),             &m_volume,         0, 255));
 
-    // ---- Section: Audio ----
-    Add(new cOsdItem(tr("--- Audio ---"), osUnknown, false));
+    // ---- OSD ----
+    Add(new cOsdItem("", osUnknown, false));
+    Add(new cMenuEditIntItem(tr("OSD timeout (s, 0=manual)"), &m_osdTimeout, 0, 30));
 
-    Add(new cMenuEditStraItem(tr("Audio Codec"),
-        &m_audioCodec,
-        acCount,
-        kAudioCodecNames));
+    // ---- Pipeline info (read-only) ----
+    Add(new cOsdItem("", osUnknown, false));
 
-    Add(new cMenuEditStrItem(tr("Audio Sink"),
-        m_audioSink,
-        sizeof(m_audioSink)));
+    char vInfo[64], aInfo[64];
+    snprintf(vInfo, sizeof(vInfo), "%s + %s",
+        GstConfig.VideoDecoderName(),
+        GstConfig.EffectiveVideoSink().c_str());
+    snprintf(aInfo, sizeof(aInfo), "%s + %s",
+        GstConfig.AudioDecoderName(),
+        GstConfig.AudioSink.c_str());
 
-    // ---- Section: Sync & Volume ----
-    Add(new cOsdItem(tr("--- Sync & Volume ---"), osUnknown, false));
+    Add(new cOsdItem(cString::sprintf("%s:\t%s", tr("Video pipeline"), vInfo), osUnknown, false));
+    Add(new cOsdItem(cString::sprintf("%s:\t%s", tr("Audio pipeline"), aInfo), osUnknown, false));
 
-    Add(new cMenuEditIntItem(tr("Audio Offset (ms)"),
-        &m_audioOffset,
-        -500, 500));
-
-    Add(new cMenuEditIntItem(tr("Volume"),
-        &m_volume,
-        0, 255));
-
-    // ---- Section: OSD ----
-    Add(new cOsdItem(tr("--- OSD ---"), osUnknown, false));
-
-    Add(new cMenuEditIntItem(tr("Info Banner Timeout (s)"),
-        &m_osdTimeout,
-        0, 30));
-    {
-        cString hint = cString::sprintf(tr("  (0 = stay until OK pressed)"));
-        Add(new cOsdItem(*hint, osUnknown, false));
-    }
-
-    // ---- Section: Info ----
-    Add(new cOsdItem(tr("--- Pipeline Info ---"), osUnknown, false));
-    {
-        cGstConfig tmp;
-        tmp.VideoCodec     = m_videoCodec;
-        tmp.HardwareDecode = (m_hardwareDecode != 0);
-        tmp.AudioCodec     = m_audioCodec;
-        tmp.VideoSink      = m_videoSink;
-
-        cString vline = cString::sprintf("  Video: %s + %s",
-            tmp.VideoDecoderName(),
-            tmp.EffectiveVideoSink().c_str());
-        cString aline = cString::sprintf("  Audio: %s + %s",
-            tmp.AudioDecoderName(),
-            m_audioSink);
-
-        Add(new cOsdItem(*vline, osUnknown, false));
-        Add(new cOsdItem(*aline, osUnknown, false));
-    }
-
-    SetCurrent(Get(current));
     Display();
 }
 
-void cGstMenuSetup::RebuildMenu()
+// ============================================================
+//  RebuildIfNeeded – live menu refresh when codec/HW changes
+// ============================================================
+void cGstMenuSetup::RebuildIfNeeded()
 {
-    // Only rebuild when a codec or HW toggle has actually changed
-    if (m_videoCodec     != m_prevVideoCodec ||
-        m_hardwareDecode != m_prevHardwareDecode)
-    {
-        m_prevVideoCodec     = m_videoCodec;
-        m_prevHardwareDecode = m_hardwareDecode;
+    if (m_videoCodec != m_prevVideoCodec || m_hwDecode != m_prevHwDecode) {
+        // Apply temporary changes so VideoDecoderName() reflects current state
+        GstConfig.VideoCodec      = m_videoCodec;
+        GstConfig.HardwareDecode  = m_hwDecode != 0;
+        m_prevVideoCodec          = m_videoCodec;
+        m_prevHwDecode            = m_hwDecode;
         BuildMenu();
     }
 }
 
 // ============================================================
-//  Key handler – live preview of decoder info while navigating
+//  ProcessKey – handle remote control in setup menu
 // ============================================================
 eOSState cGstMenuSetup::ProcessKey(eKeys Key)
 {
     eOSState state = cMenuSetupPage::ProcessKey(Key);
-
-    // After any edit key, refresh the info line if codec changed
-    if (Key != kNone)
-        RebuildMenu();
-
+    if (state == osUnknown && Key != kNone)
+        RebuildIfNeeded();
     return state;
 }
 
 // ============================================================
-//  Store – commit local copies → global config → VDR setup.conf
+//  Store – commit working values to GstConfig + VDR setup.conf
 // ============================================================
 void cGstMenuSetup::Store()
 {
     GstConfig.VideoCodec     = m_videoCodec;
-    GstConfig.HardwareDecode = (m_hardwareDecode != 0);
+    GstConfig.HardwareDecode = m_hwDecode != 0;
     GstConfig.AudioCodec     = m_audioCodec;
     GstConfig.AudioOffset    = m_audioOffset;
     GstConfig.Volume         = m_volume;
+    GstConfig.OsdTimeout     = m_osdTimeout;
     GstConfig.VideoSink      = m_videoSink;
     GstConfig.AudioSink      = m_audioSink;
-    GstConfig.OsdTimeout     = m_osdTimeout;
 
-    // Persist all values in VDR's setup.conf
+    // Persist to VDR's setup.conf
     SetupStore("VideoCodec",     GstConfig.VideoCodec);
     SetupStore("HardwareDecode", GstConfig.HardwareDecode ? 1 : 0);
     SetupStore("AudioCodec",     GstConfig.AudioCodec);
     SetupStore("AudioOffset",    GstConfig.AudioOffset);
     SetupStore("Volume",         GstConfig.Volume);
+    SetupStore("OsdTimeout",     GstConfig.OsdTimeout);
     SetupStore("VideoSink",      GstConfig.VideoSink.c_str());
     SetupStore("AudioSink",      GstConfig.AudioSink.c_str());
-    SetupStore("OsdTimeout",     GstConfig.OsdTimeout);
 
-    // Apply timeout change live
+    // Apply changes to running pipeline immediately
+    if (GstDevice)
+        GstDevice->ReconfigurePipeline();
+
+    // Update OSD timeout
     if (GstOsd)
         GstOsd->SetTimeout(GstConfig.OsdTimeout);
-
-    isyslog("[gstreamer] Config saved: VideoCodec=%s HW=%d AudioCodec=%s "
-            "AudioOffset=%dms Volume=%d VideoSink=%s AudioSink=%s",
-        GstConfig.VideoCodecName(),
-        GstConfig.HardwareDecode,
-        GstConfig.AudioCodecName(),
-        GstConfig.AudioOffset,
-        GstConfig.Volume,
-        GstConfig.VideoSink.c_str(),
-        GstConfig.AudioSink.c_str());
 }

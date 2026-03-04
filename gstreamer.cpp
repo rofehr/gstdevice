@@ -1,242 +1,183 @@
 #include "gstreamer.h"
+#include "config.h"
 #include "gstdevice.h"
 #include "gstosd.h"
 #include "setup.h"
-#include "config.h"
+
 #include <vdr/plugin.h>
+#include <vdr/remote.h>
 #include <cstring>
+#include <cstdlib>
 
 // ============================================================
-//  Global instances
+//  Global singletons
 // ============================================================
-cGstConfig      GstConfig;
-cGstOsd        *GstOsd        = nullptr;
-sGstStreamInfo  GstStreamInfo;
+cGstConfig    GstConfig;
+sGstStreamInfo GstStreamInfo;
+cGstDevice   *GstDevice = nullptr;
+cGstOsd      *GstOsd    = nullptr;
 
 // ============================================================
-//  cPluginGstreamer
+//  cPluginGstreamer – VDR plugin class
 // ============================================================
 class cPluginGstreamer : public cPlugin
 {
 public:
-    cPluginGstreamer() = default;
-    virtual ~cPluginGstreamer();
+    cPluginGstreamer();
+    virtual ~cPluginGstreamer() override;
 
-    virtual const char *Version()        override { return PLUGIN_VERSION; }
-    virtual const char *Description()    override { return tr(PLUGIN_DESCRIPTION); }
-    virtual const char *MainMenuEntry()  override { return nullptr; }
-
-    virtual bool Initialize() override;
-    virtual bool Start()      override;
-    virtual void Stop()       override;
-    virtual void Housekeeping()override {}
-
-    // Setup OSD page
-    virtual cMenuSetupPage *SetupMenu() override;
-    virtual bool SetupParse(const char *Name, const char *Value) override;
-
-    // CLI options
+    // cPlugin interface
+    virtual const char *Version()     override { return PLUGIN_VERSION;     }
+    virtual const char *Description() override { return PLUGIN_DESCRIPTION; }
     virtual const char *CommandLineHelp() override;
-    virtual bool ProcessArgs(int argc, char *argv[]) override;
+    virtual bool        ProcessArgs(int argc, char *argv[]) override;
+    virtual bool        Initialize() override;
+    virtual bool        Start() override;
+    virtual void        Stop() override;
+    virtual void        Housekeeping() override;
+    virtual const char *MainMenuEntry() override { return nullptr; }
+    virtual cOsdObject *MainMenuAction() override { return nullptr; }
+    virtual cMenuSetupPage *SetupMenu() override;
+    virtual bool        SetupParse(const char *Name, const char *Value) override;
+    virtual bool        Service(const char *Id, void *Data = nullptr) override;
 
 private:
-    cGstDevice *m_device      = nullptr;
-    bool        m_gstInitDone = false;
+    // Parsed command-line overrides (applied before Initialize)
+    std::string m_argVideoSink;
+    std::string m_argAudioSink;
 };
 
+VDRPLUGINCREATOR(cPluginGstreamer)
+
 // ============================================================
-//  Destructor
+//  Constructor / Destructor
 // ============================================================
+cPluginGstreamer::cPluginGstreamer()
+{
+    // Nothing – GStreamer is initialised in Initialize()
+}
+
 cPluginGstreamer::~cPluginGstreamer()
 {
-    if (m_gstInitDone)
-        gst_deinit();
+    // Stop() is guaranteed to be called before destructor
 }
 
 // ============================================================
-//  Command-line help & argument parsing
+//  CommandLineHelp
 // ============================================================
 const char *cPluginGstreamer::CommandLineHelp()
 {
     return
-        "  -V SINK  --videosink=SINK   GStreamer video sink (default: autovideosink)\n"
-        "  -A SINK  --audiosink=SINK   GStreamer audio sink (default: autoaudiosink)\n";
+        "  --videosink=ELEMENT   GStreamer video sink element (default: autovideosink)\n"
+        "  --audiosink=ELEMENT   GStreamer audio sink element (default: autoaudiosink)\n";
 }
 
+// ============================================================
+//  ProcessArgs
+// ============================================================
 bool cPluginGstreamer::ProcessArgs(int argc, char *argv[])
 {
-    static struct option longOpts[] = {
-        { "videosink", required_argument, nullptr, 'V' },
-        { "audiosink", required_argument, nullptr, 'A' },
-        { nullptr, 0, nullptr, 0 }
-    };
-    int c;
-    while ((c = getopt_long(argc, argv, "V:A:", longOpts, nullptr)) != -1) {
-        switch (c) {
-        case 'V': GstConfig.VideoSink = optarg; break;
-        case 'A': GstConfig.AudioSink = optarg; break;
-        default:  return false;
+    for (int i = 0; i < argc; ++i) {
+        if (strncmp(argv[i], "--videosink=", 12) == 0)
+            m_argVideoSink = argv[i] + 12;
+        else if (strncmp(argv[i], "--audiosink=", 12) == 0)
+            m_argAudioSink = argv[i] + 12;
+        else {
+            esyslog("[gstreamer] Unknown argument: %s", argv[i]);
+            return false;
         }
     }
     return true;
 }
 
 // ============================================================
-//  Setup persistence  (setup.conf)
-// ============================================================
-cMenuSetupPage *cPluginGstreamer::SetupMenu()
-{
-    return new cGstMenuSetup();
-}
-
-bool cPluginGstreamer::SetupParse(const char *Name, const char *Value)
-{
-    if      (strcmp(Name, "VideoCodec")     == 0) { GstConfig.VideoCodec     = atoi(Value); return true; }
-    else if (strcmp(Name, "HardwareDecode") == 0) { GstConfig.HardwareDecode = atoi(Value) != 0; return true; }
-    else if (strcmp(Name, "AudioCodec")     == 0) { GstConfig.AudioCodec     = atoi(Value); return true; }
-    else if (strcmp(Name, "AudioOffset")    == 0) { GstConfig.AudioOffset    = atoi(Value); return true; }
-    else if (strcmp(Name, "Volume")         == 0) { GstConfig.Volume         = atoi(Value); return true; }
-    else if (strcmp(Name, "VideoSink")      == 0) { GstConfig.VideoSink      = Value;       return true; }
-    else if (strcmp(Name, "AudioSink")      == 0) { GstConfig.AudioSink      = Value;       return true; }
-    else if (strcmp(Name, "OsdTimeout")     == 0) { GstConfig.OsdTimeout     = atoi(Value); return true; }
-    return false;
-}
-
-// ============================================================
-//  Plugin lifecycle
+//  Initialize – called before VDR enters main loop
+//  (GStreamer init, device + OSD creation)
 // ============================================================
 bool cPluginGstreamer::Initialize()
 {
-    gst_init(nullptr, nullptr);
-    m_gstInitDone = true;
+    // Apply command-line sink overrides
+    if (!m_argVideoSink.empty()) GstConfig.VideoSink = m_argVideoSink;
+    if (!m_argAudioSink.empty()) GstConfig.AudioSink = m_argAudioSink;
 
-    guint major, minor, micro, nano;
-    gst_version(&major, &minor, &micro, &nano);
-    isyslog("[gstreamer] GStreamer %u.%u.%u initialized | plugin v%s",
-        major, minor, micro, PLUGIN_VERSION);
+    // Initialise GStreamer; pass nullptr so it doesn't consume VDR's argv
+    if (!gst_is_initialized()) {
+        GError *err = nullptr;
+        if (!gst_init_check(nullptr, nullptr, &err)) {
+            esyslog("[gstreamer] gst_init_check failed: %s",
+                err ? err->message : "unknown");
+            g_clear_error(&err);
+            return false;
+        }
+    }
 
-    m_device = new cGstDevice();
+    // Log GStreamer version
+    guint maj, min, mic, nano;
+    gst_version(&maj, &min, &mic, &nano);
+    isyslog("[gstreamer] GStreamer %u.%u.%u.%u", maj, min, mic, nano);
 
-    // Create the OSD manager
+    // Create output device (registers itself with VDR automatically)
+    GstDevice = new cGstDevice();
+
+    // Create OSD handler
     GstOsd = new cGstOsd();
     GstOsd->SetTimeout(GstConfig.OsdTimeout);
 
+    isyslog("[gstreamer] Plugin v%s initialised", PLUGIN_VERSION);
     return true;
 }
 
+// ============================================================
+//  Start – called when VDR is fully up
+// ============================================================
 bool cPluginGstreamer::Start()
 {
-    if (!m_device)
-        return false;
-
-    if (!m_device->InitPipeline()) {
-        esyslog("[gstreamer] ERROR: Pipeline initialisation failed!");
+    if (GstDevice && !GstDevice->InitPipeline()) {
+        esyslog("[gstreamer] Pipeline initialisation failed");
         return false;
     }
-    isyslog("[gstreamer] Started: codec=%s hw=%d audioCodec=%s offset=%dms sink=%s/%s osdTimeout=%ds",
-        GstConfig.VideoCodecName(), GstConfig.HardwareDecode,
-        GstConfig.AudioCodecName(), GstConfig.AudioOffset,
-        GstConfig.EffectiveVideoSink().c_str(), GstConfig.AudioSink.c_str(),
-        GstConfig.OsdTimeout);
     return true;
 }
 
+// ============================================================
+//  Stop – called on VDR shutdown
+// ============================================================
 void cPluginGstreamer::Stop()
 {
-    // Hide and destroy OSD before device
     if (GstOsd) {
-        GstOsd->Hide();
         delete GstOsd;
         GstOsd = nullptr;
     }
-    if (m_device) {
-        m_device->DestroyPipeline();
-        m_device = nullptr;
+    if (GstDevice) {
+        GstDevice->DestroyPipeline();
+        // cDevice is not heap-deleted; VDR manages device lifetime
+        // via the cDevice list.  Just null the pointer here.
+        GstDevice = nullptr;
     }
-    isyslog("[gstreamer] Stopped");
+    gst_deinit();
+    isyslog("[gstreamer] Plugin stopped");
 }
 
 // ============================================================
-//  VDR plugin registration
+//  Housekeeping – called once per second from VDR main loop
 // ============================================================
-VDRPLUGINCREATOR(cPluginGstreamer);
-
-// ============================================================
-//  cPluginGstreamer
-// ============================================================
-class cPluginGstreamer : public cPlugin
+void cPluginGstreamer::Housekeeping()
 {
-public:
-    cPluginGstreamer() = default;
-    virtual ~cPluginGstreamer();
-
-    virtual const char *Version()        override { return PLUGIN_VERSION; }
-    virtual const char *Description()    override { return tr(PLUGIN_DESCRIPTION); }
-    virtual const char *MainMenuEntry()  override { return nullptr; }
-
-    virtual bool Initialize() override;
-    virtual bool Start()      override;
-    virtual void Stop()       override;
-    virtual void Housekeeping()override {}
-
-    // Setup OSD page
-    virtual cMenuSetupPage *SetupMenu() override;
-    virtual bool SetupParse(const char *Name, const char *Value) override;
-
-    // CLI options
-    virtual const char *CommandLineHelp() override;
-    virtual bool ProcessArgs(int argc, char *argv[]) override;
-
-private:
-    cGstDevice *m_device      = nullptr;
-    bool        m_gstInitDone = false;
-};
-
-// ============================================================
-//  Destructor
-// ============================================================
-cPluginGstreamer::~cPluginGstreamer()
-{
-    if (m_gstInitDone)
-        gst_deinit();
+    // Nothing currently required; GStreamer manages its own mainloop
+    // via the pipeline's internal threads.
 }
 
 // ============================================================
-//  Command-line help & argument parsing
-// ============================================================
-const char *cPluginGstreamer::CommandLineHelp()
-{
-    return
-        "  -V SINK  --videosink=SINK   GStreamer video sink (default: autovideosink)\n"
-        "  -A SINK  --audiosink=SINK   GStreamer audio sink (default: autoaudiosink)\n";
-}
-
-bool cPluginGstreamer::ProcessArgs(int argc, char *argv[])
-{
-    static struct option longOpts[] = {
-        { "videosink", required_argument, nullptr, 'V' },
-        { "audiosink", required_argument, nullptr, 'A' },
-        { nullptr, 0, nullptr, 0 }
-    };
-    int c;
-    while ((c = getopt_long(argc, argv, "V:A:", longOpts, nullptr)) != -1) {
-        switch (c) {
-        case 'V': GstConfig.VideoSink = optarg; break;
-        case 'A': GstConfig.AudioSink = optarg; break;
-        default:  return false;
-        }
-    }
-    return true;
-}
-
-// ============================================================
-//  Setup persistence  (setup.conf)
+//  SetupMenu
 // ============================================================
 cMenuSetupPage *cPluginGstreamer::SetupMenu()
 {
     return new cGstMenuSetup();
 }
 
+// ============================================================
+//  SetupParse – restore settings from VDR's setup.conf
+// ============================================================
 bool cPluginGstreamer::SetupParse(const char *Name, const char *Value)
 {
     if      (strcmp(Name, "VideoCodec")     == 0) { GstConfig.VideoCodec     = atoi(Value); return true; }
@@ -244,54 +185,23 @@ bool cPluginGstreamer::SetupParse(const char *Name, const char *Value)
     else if (strcmp(Name, "AudioCodec")     == 0) { GstConfig.AudioCodec     = atoi(Value); return true; }
     else if (strcmp(Name, "AudioOffset")    == 0) { GstConfig.AudioOffset    = atoi(Value); return true; }
     else if (strcmp(Name, "Volume")         == 0) { GstConfig.Volume         = atoi(Value); return true; }
-    else if (strcmp(Name, "VideoSink")      == 0) { GstConfig.VideoSink      = Value;       return true; }
-    else if (strcmp(Name, "AudioSink")      == 0) { GstConfig.AudioSink      = Value;       return true; }
+    else if (strcmp(Name, "OsdTimeout")     == 0) { GstConfig.OsdTimeout     = atoi(Value); return true; }
+    else if (strcmp(Name, "VideoSink")      == 0) { GstConfig.VideoSink      = Value;        return true; }
+    else if (strcmp(Name, "AudioSink")      == 0) { GstConfig.AudioSink      = Value;        return true; }
+
     return false;
 }
 
 // ============================================================
-//  Plugin lifecycle
+//  Service – inter-plugin communication
 // ============================================================
-bool cPluginGstreamer::Initialize()
+bool cPluginGstreamer::Service(const char *Id, void * /*Data*/)
 {
-    gst_init(nullptr, nullptr);
-    m_gstInitDone = true;
-
-    guint major, minor, micro, nano;
-    gst_version(&major, &minor, &micro, &nano);
-    isyslog("[gstreamer] GStreamer %u.%u.%u initialized | plugin v%s",
-        major, minor, micro, PLUGIN_VERSION);
-
-    m_device = new cGstDevice();
-    return true;
-}
-
-bool cPluginGstreamer::Start()
-{
-    if (!m_device)
-        return false;
-
-    if (!m_device->InitPipeline()) {
-        esyslog("[gstreamer] ERROR: Pipeline initialisation failed!");
-        return false;
+    // "GstreamerReconfigure" – called by external plugins to trigger
+    // a live pipeline rebuild after changing GstConfig directly
+    if (strcmp(Id, "GstreamerReconfigure") == 0) {
+        if (GstDevice) GstDevice->ReconfigurePipeline();
+        return true;
     }
-    isyslog("[gstreamer] Started: codec=%s hw=%d audioCodec=%s offset=%dms sink=%s/%s",
-        GstConfig.VideoCodecName(), GstConfig.HardwareDecode,
-        GstConfig.AudioCodecName(), GstConfig.AudioOffset,
-        GstConfig.EffectiveVideoSink().c_str(), GstConfig.AudioSink.c_str());
-    return true;
+    return false;
 }
-
-void cPluginGstreamer::Stop()
-{
-    if (m_device) {
-        m_device->DestroyPipeline();
-        m_device = nullptr;
-    }
-    isyslog("[gstreamer] Stopped");
-}
-
-// ============================================================
-//  VDR plugin registration
-// ============================================================
-VDRPLUGINCREATOR(cPluginGstreamer);

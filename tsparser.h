@@ -1,38 +1,26 @@
 #pragma once
 
-// ============================================================
-//  cTsParser
-//
-//  Parses 188-byte MPEG-TS packets as delivered by VDR's
-//  PlayTs() / PlayTsVideo() / PlayTsAudio() callbacks.
-//
-//  For each complete PES packet it calls the registered
-//  callback with:
-//    - the raw PES payload (ES data)
-//    - the PTS extracted from the PES header (or GST_CLOCK_TIME_NONE)
-//    - a flag indicating video vs. audio
-//
-//  Design:
-//   • One cTsParser instance per elementary stream (video / audio).
-//   • Internally reassembles fragmented PES packets across multiple
-//     TS packets using a flat byte buffer.
-//   • Thread-safe via external locking in cGstDevice (m_mutex).
-// ============================================================
+/*
+ * cTsParser
+ * Reassembles PES frames from 188-byte MPEG-TS packets and extracts
+ * the 33-bit PTS, converting it to GStreamer nanoseconds.
+ *
+ * One instance per elementary stream (video / audio).
+ * Not thread-safe – callers must serialise access externally.
+ */
 
 #include <cstdint>
 #include <cstring>
 #include <functional>
 #include <vector>
+#include <gst/gst.h>   // for GST_CLOCK_TIME_NONE
 
-// MPEG-TS constants
-static constexpr int    kTsPacketSize   = 188;
+static constexpr int     kTsPacketSize = 188;
 static constexpr uint8_t kTsSyncByte   = 0x47;
+static constexpr size_t  kPesBufMax    = 4 * 1024 * 1024;   // 4 MB
 
-// Maximum PES reassembly buffer (4 MB – one complete I-frame for H.265 4K)
-static constexpr size_t kTsBufMax      = 4 * 1024 * 1024;
-
-// Callback: (payload_data, payload_len, pts_ns)
-//   pts_ns == GST_CLOCK_TIME_NONE when no PTS present in PES header
+// Callback: (es_data, es_len, pts_in_nanoseconds)
+// pts == GST_CLOCK_TIME_NONE when no PTS present in PES header
 using TsPayloadCb = std::function<void(const uint8_t *data, int len, uint64_t pts_ns)>;
 
 // ============================================================
@@ -44,73 +32,60 @@ public:
         m_buf.reserve(256 * 1024);
     }
 
-    // Feed one 188-byte TS packet.
-    // Returns false if the packet is malformed / sync lost.
+    // Feed exactly one 188-byte TS packet
     bool Feed(const uint8_t *pkt, int len = kTsPacketSize);
 
-    // Flush any pending incomplete PES (e.g. on channel change / Clear())
+    // Dispatch pending PES buffer (call on channel switch / Clear)
     void Flush();
 
-    // Reset parser state (e.g. after pipeline rebuild)
+    // Discard all state without dispatching
     void Reset();
 
 private:
     TsPayloadCb          m_cb;
-    std::vector<uint8_t> m_buf;          // PES reassembly buffer
-    bool                 m_started = false; // saw first PUSI
+    std::vector<uint8_t> m_buf;
+    bool                 m_started = false;
 
-    // Parse PTS from PES header; returns GST_CLOCK_TIME_NONE if absent.
-    static uint64_t ExtractPts(const uint8_t *pes, int len);
-
-    // Dispatch completed PES buffer to callback
-    void Dispatch();
+    void     Dispatch();
+    uint64_t ExtractPts(const uint8_t *pes, int len);
 };
 
-// ============================================================
-//  Inline implementation (header-only for simplicity)
-// ============================================================
+// ---- Inline implementation ----
 
 inline bool cTsParser::Feed(const uint8_t *pkt, int len)
 {
     if (len < kTsPacketSize || pkt[0] != kTsSyncByte)
-        return false;   // sync error
+        return false;
 
-    // TS header fields
-    bool  pusi        = (pkt[1] & 0x40) != 0;   // payload_unit_start_indicator
-    bool  hasAdapt    = (pkt[3] & 0x20) != 0;
-    bool  hasPayload  = (pkt[3] & 0x10) != 0;
+    bool pusi       = (pkt[1] & 0x40) != 0;
+    bool hasAdapt   = (pkt[3] & 0x20) != 0;
+    bool hasPayload = (pkt[3] & 0x10) != 0;
 
     if (!hasPayload)
-        return true;   // adaptation-only packet, nothing to do
+        return true;
 
-    // Skip adaptation field
     int payloadOffset = 4;
     if (hasAdapt) {
-        int adaptLen = pkt[4];
-        payloadOffset += 1 + adaptLen;
+        payloadOffset += 1 + pkt[4];
         if (payloadOffset >= kTsPacketSize)
-            return true;   // no room for payload
+            return true;
     }
 
     const uint8_t *payload    = pkt + payloadOffset;
     int            payloadLen = kTsPacketSize - payloadOffset;
 
     if (pusi) {
-        // New PES starts here – dispatch previous one first
         if (m_started && !m_buf.empty())
             Dispatch();
-
         m_buf.clear();
         m_started = true;
     }
 
     if (!m_started)
-        return true;   // skip until first PUSI
+        return true;
 
-    // Append payload to reassembly buffer (guard against runaway streams)
-    if (m_buf.size() + payloadLen <= kTsBufMax) {
+    if (m_buf.size() + payloadLen <= kPesBufMax)
         m_buf.insert(m_buf.end(), payload, payload + payloadLen);
-    }
 
     return true;
 }
@@ -118,23 +93,21 @@ inline bool cTsParser::Feed(const uint8_t *pkt, int len)
 inline void cTsParser::Dispatch()
 {
     if (m_buf.size() < 9)
-        return;   // too short to be a valid PES header
+        return;
 
     const uint8_t *pes = m_buf.data();
-    int            tot = (int)m_buf.size();
+    int            tot = static_cast<int>(m_buf.size());
 
-    // Verify PES start code prefix (0x000001)
+    // Verify PES start code 0x000001
     if (pes[0] != 0x00 || pes[1] != 0x00 || pes[2] != 0x01)
         return;
 
-    uint64_t pts = ExtractPts(pes, tot);
-
-    // PES header data length is in byte [8]; ES payload starts after that
-    int headerDataLen  = pes[8];
-    int esOffset       = 9 + headerDataLen;
+    uint64_t pts        = ExtractPts(pes, tot);
+    int      headerLen  = pes[8];
+    int      esOffset   = 9 + headerLen;
 
     if (esOffset >= tot)
-        return;   // no ES payload
+        return;
 
     m_cb(pes + esOffset, tot - esOffset, pts);
 }
@@ -153,47 +126,24 @@ inline void cTsParser::Reset()
     m_started = false;
 }
 
-// ============================================================
-//  PTS extraction from PES header
-//
-//  PES header layout (simplified):
-//    [0..2]  start code 0x000001
-//    [3]     stream_id
-//    [4..5]  PES_packet_length
-//    [6]     flags byte 1
-//    [7]     flags byte 2  – bit7=PTS_DTS_flags[1], bit6=[0]
-//    [8]     header_data_length
-//    [9..]   optional fields (PTS/DTS first if present)
-//
-//  PTS is a 33-bit value encoded in 5 bytes:
-//    byte0: 0b0010_PPP1   (or 0b0011 if DTS also present)
-//    byte1: PPPPPPPP
-//    byte2: PPPPPPP1
-//    byte3: PPPPPPPP
-//    byte4: PPPPPPP1
-// ============================================================
 inline uint64_t cTsParser::ExtractPts(const uint8_t *pes, int len)
 {
-    // Need at least 14 bytes for PTS to be present
     if (len < 14)
         return GST_CLOCK_TIME_NONE;
 
     uint8_t ptsDtsFlags = (pes[7] >> 6) & 0x03;
     if (ptsDtsFlags == 0x00)
-        return GST_CLOCK_TIME_NONE;   // no PTS in this PES
+        return GST_CLOCK_TIME_NONE;
 
-    const uint8_t *p = pes + 9;   // start of optional PES fields
+    const uint8_t *p = pes + 9;
 
-    // Decode 33-bit PTS
     uint64_t pts90 =
-        ((uint64_t)(p[0] & 0x0E) << 29) |
-        ((uint64_t)(p[1])        << 22) |
-        ((uint64_t)(p[2] & 0xFE) << 14) |
-        ((uint64_t)(p[3])        <<  7) |
-        ((uint64_t)(p[4] & 0xFE) >>  1);
+        (static_cast<uint64_t>(p[0] & 0x0E) << 29) |
+        (static_cast<uint64_t>(p[1])         << 22) |
+        (static_cast<uint64_t>(p[2] & 0xFE)  << 14) |
+        (static_cast<uint64_t>(p[3])          <<  7) |
+        (static_cast<uint64_t>(p[4] & 0xFE)   >>  1);
 
-    // Convert from 90 kHz ticks → GStreamer nanoseconds
-    // pts_ns = pts90 * 1_000_000_000 / 90_000
-    //        = pts90 * 100_000 / 9
+    // 90 kHz ticks → nanoseconds
     return (pts90 * 100000ULL) / 9ULL;
 }
