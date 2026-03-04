@@ -3,22 +3,20 @@
 
 PLUGIN = gstreamer
 
-VDRDIR      ?= /usr/include/vdr
+#VDRDIR      ?= /usr/include/vdr
 PKG_CONFIG  ?= pkg-config
 
 # GStreamer packages needed
-GST_PKGS = gstreamer-1.0 \
-           gstreamer-app-1.0 \
-           gstreamer-video-1.0 \
-           gstreamer-audio-1.0
+#GST_PKGS = gstreamer-1.0 \
+#           gstreamer-app-1.0 \
+#           gstreamer-video-1.0 \
+#           gstreamer-audio-1.0
 
-GSTREAMER_CFLAGS := $(shell $(PKG_CONFIG) --cflags $(GST_PKGS))
-GSTREAMER_LIBS   := $(shell $(PKG_CONFIG) --libs   $(GST_PKGS))
+#GSTREAMER_CFLAGS := $(shell $(PKG_CONFIG) --cflags $(GST_PKGS))
+#GSTREAMER_LIBS   := $(shell $(PKG_CONFIG) --libs   $(GST_PKGS))
 
 CXX      ?= g++
 CXXFLAGS  = -std=c++17 -O2 -Wall -Wextra -fPIC \
-            -I$(VDRDIR) \
-            $(GSTREAMER_CFLAGS) \
             -DPLUGIN_NAME_I18N='"$(PLUGIN)"'
 
 LDFLAGS   = $(GSTREAMER_LIBS) -shared
