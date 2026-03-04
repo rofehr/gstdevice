@@ -2,28 +2,23 @@
 
 /*
  * globals.h
- * Central declaration of all plugin-global singleton pointers and structs.
- * Defined (= storage allocated) exactly once in gstreamer.cpp.
+ * Declares all plugin-global singletons.
+ * Definitions (storage) are in gstreamer.cpp.
  *
- * Every translation unit that needs access to GstDevice, GstOsd,
- * GstConfig or GstStreamInfo should include this header.
- *
- * Include order:
- *   gstreamer.h  (VDR + GStreamer system headers)
- *   globals.h    (this file)
- *
- * Never include gstdevice.h or gstosd.h from here – that would create
- * circular dependencies.  Forward declarations are sufficient.
+ * Include chain (no cycles):
+ *   config.h   defines cGstConfig, sGstStreamInfo   (no plugin deps)
+ *   globals.h  includes config.h, forward-declares cGstDevice/cGstOsd
+ *   gstdevice.h / gstosd.h  include globals.h
  */
 
-// ---- Forward declarations ----
-class cGstConfig;
+#include "config.h"   // cGstConfig, sGstStreamInfo (complete types needed for extern objects)
+
+// Pointer-only forward declarations – full type not required for pointer externs
 class cGstDevice;
 class cGstOsd;
-struct sGstStreamInfo;
 
-// ---- Externs (defined in gstreamer.cpp) ----
-extern cGstConfig     GstConfig;
-extern cGstDevice    *GstDevice;
-extern cGstOsd       *GstOsd;
-extern sGstStreamInfo GstStreamInfo;
+// ---- Global singletons (defined once in gstreamer.cpp) ----
+extern cGstConfig     GstConfig;       // full object – config.h provides complete type
+extern cGstDevice    *GstDevice;       // pointer    – forward-declare is sufficient
+extern cGstOsd       *GstOsd;          // pointer    – forward-declare is sufficient
+extern sGstStreamInfo GstStreamInfo;   // full object – config.h provides complete type

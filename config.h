@@ -48,4 +48,23 @@ public:
     }
 };
 
+
+// ============================================================
+//  sGstStreamInfo – live stream properties (filled by the device,
+//  consumed by the OSD).  Lives here so globals.h can include
+//  config.h alone without pulling in all of gstdevice.h.
+// ============================================================
+struct sGstStreamInfo {
+    std::string videoCodec;
+    int         videoWidth       = 0;
+    int         videoHeight      = 0;
+    double      videoFps         = 0.0;
+    bool        hwDecode         = false;
+    std::string audioCodec;
+    int         audioSampleRate  = 0;
+    int         audioChannels    = 0;
+    std::string pipelineState;       // "Playing" | "Paused" | "Buffering"
+    int         bufferingPercent = 0;
+};
+
 extern cGstConfig GstConfig;

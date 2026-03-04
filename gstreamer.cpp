@@ -8,7 +8,7 @@
 #include <vdr/remote.h>
 #include <cstring>
 #include <cstdlib>
-#include "globals.h"
+
 
 // ============================================================
 //  Global singletons
