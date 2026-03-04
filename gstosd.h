@@ -2,8 +2,7 @@
 
 #include "gstreamer.h"
 #include "config.h"
-
-struct sGstStreamInfo;   // defined in gstdevice.h
+#include "globals.h"
 
 // ============================================================
 //  cGstOsd
@@ -89,4 +88,3 @@ private:
     static constexpr tColor kSwBadge  = 0xFFE67E22;   // orange = Software
 };
 
-extern cGstOsd *GstOsd;

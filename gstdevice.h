@@ -3,10 +3,7 @@
 #include "gstreamer.h"
 #include "config.h"
 #include "tsparser.h"
-
-// forward declaration
-class cGstOsd;
-extern cGstOsd *GstOsd;
+#include "globals.h"
 
 // ---- Live stream info (filled by QueryAndUpdateStreamInfo) ----
 struct sGstStreamInfo {
@@ -21,7 +18,6 @@ struct sGstStreamInfo {
     std::string pipelineState;       // "Playing" | "Paused" | "Buffering"
     int         bufferingPercent  = 0;
 };
-extern sGstStreamInfo GstStreamInfo;
 
 // ============================================================
 //  cGstDevice
@@ -48,9 +44,10 @@ public:
     virtual int     PlayVideo(const uchar *Data, int Length) override;
     virtual int     PlayAudio(const uchar *Data, int Length, uchar Id) override;
 
-    // TS packet paths – VDR 2.2+ primary delivery mechanism
-    // PlayTs   : mixed TS buffer (PIDs auto-detected)
-    // PlayTsVideo / PlayTsAudio: pre-filtered single-PID packets from VDR
+    // TS packet paths – VDR delivers pre-filtered single-PID packets.
+    // PlayTsVideo: called for every video TS packet (PID already known to VDR)
+    // PlayTsAudio: called for every audio TS packet (PID already known to VDR)
+    // Note: PlayTs() was removed from cDevice in VDR 2.4+ – do NOT override it.
     virtual int     PlayTsVideo(const uchar *Data, int Length) override;
     virtual int     PlayTsAudio(const uchar *Data, int Length) override;
 
@@ -146,6 +143,3 @@ private:
     static GstBusSyncReply BusSyncHandler(GstBus *, GstMessage *, gpointer);
     void HandleBusMessage(GstMessage *msg);
 };
-
-class cGstDevice;
-extern cGstDevice    *GstDevice;
