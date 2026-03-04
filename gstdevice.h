@@ -8,8 +8,6 @@
 class cGstOsd;
 extern cGstOsd *GstOsd;
 
-cGstDevice*    GstDevice;
-
 // ---- Live stream info (filled by QueryAndUpdateStreamInfo) ----
 struct sGstStreamInfo {
     std::string videoCodec;

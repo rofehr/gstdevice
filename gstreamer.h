@@ -45,5 +45,5 @@
 // Forward declarations of global singletons (defined in gstreamer.cpp)
 class cGstDevice;
 class cGstOsd;
-//extern cGstDevice    *GstDevice;
-//extern cGstOsd       *GstOsd;
+extern cGstDevice    GstDevice;
+extern cGstOsd       GstOsd;
