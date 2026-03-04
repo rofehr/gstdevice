@@ -8,14 +8,13 @@
 #include <vdr/remote.h>
 #include <cstring>
 #include <cstdlib>
+#include "globals.h"
 
 // ============================================================
 //  Global singletons
 // ============================================================
 cGstConfig    GstConfig;
 sGstStreamInfo GstStreamInfo;
-cGstDevice   *GstDevice = nullptr;
-cGstOsd      *GstOsd    = nullptr;
 
 // ============================================================
 //  cPluginGstreamer – VDR plugin class
