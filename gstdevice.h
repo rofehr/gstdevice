@@ -146,3 +146,5 @@ private:
     static GstBusSyncReply BusSyncHandler(GstBus *, GstMessage *, gpointer);
     void HandleBusMessage(GstMessage *msg);
 };
+
+extern cGstDevice    *GstDevice;
