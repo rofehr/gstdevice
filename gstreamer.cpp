@@ -14,8 +14,8 @@
 // ============================================================
 cGstConfig    GstConfig;
 sGstStreamInfo GstStreamInfo;
-cGstDevice   *GstDevice = nullptr;
-cGstOsd      *GstOsd    = nullptr;
+#cGstDevice   *GstDevice = nullptr;
+#cGstOsd      *GstOsd    = nullptr;
 
 // ============================================================
 //  cPluginGstreamer – VDR plugin class
