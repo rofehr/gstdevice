@@ -3,23 +3,7 @@
 
 PLUGIN = gstreamer
 
-#VDRDIR      ?= /usr/include/vdr
-PKG_CONFIG  ?= pkg-config
-
-# GStreamer packages needed
-#GST_PKGS = gstreamer-1.0 \
-#           gstreamer-app-1.0 \
-#           gstreamer-video-1.0 \
-#           gstreamer-audio-1.0
-
-#GSTREAMER_CFLAGS := $(shell $(PKG_CONFIG) --cflags $(GST_PKGS))
-#GSTREAMER_LIBS   := $(shell $(PKG_CONFIG) --libs   $(GST_PKGS))
-
-CXX      ?= g++
-CXXFLAGS  = -std=c++17 -O2 -Wall -Wextra -fPIC \
-            -DPLUGIN_NAME_I18N='"$(PLUGIN)"'
-
-LDFLAGS   = $(GSTREAMER_LIBS) -shared
+PKGCFG = $(if $(VDRDIR),$(shell pkg-config --variable=$(1) $(VDRDIR)/vdr.pc),$(shell PKG_CONFIG_PATH="$$PKG_CONFIG_PATH:../../.." pkg-config --variable=$(1) vdr))
 
 SRCS = gstreamer.cpp \
        gstdevice.cpp \
