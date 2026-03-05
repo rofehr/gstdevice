@@ -4,7 +4,7 @@
  * VDR 2.6+ API:
  *   LOCK_SCHEDULES_READ  – replaces cSchedulesLock (VDR 2.4+)
  *   cOsd / cPixmap       – TrueColour drawing
- *   cFont::GetFont()     – theme fonts; fontOsdTitle since VDR 2.4
+ *   cFont::GetFont()     – theme fonts (fontOsd, fontSml, fontFix)
  */
 
 #include "gstosd.h"
@@ -161,20 +161,16 @@ void cGstOsd::Render()
     if (!m_osd || !m_pixmap) return;
 
     // ── Fonts ─────────────────────────────────────────────────────────────────
-    // cFont::GetFont() returns a VDR-owned pointer; do NOT delete.
-    // fontOsdTitle exists since VDR 2.4.0.
-#if APIVERSNUM >= 20400
-    const cFont *fLg = cFont::GetFont(fontOsdTitle);
-#else
-    const cFont *fLg = cFont::GetFont(fontOsd);
-#endif
+    // VDR's eFontType enum contains exactly: fontOsd, fontSml, fontFix.
+    // VDR has no title-size font enum – fontOsd is used for all headings.
+    // cFont::GetFont() returns a VDR-owned pointer; never delete it.
     const cFont *fMd = cFont::GetFont(fontOsd);
     const cFont *fSm = cFont::GetFont(fontSml);
+    const cFont *fLg = fMd;   // reuse fontOsd – no separate title font in VDR
 
-    if (!fLg) fLg = fMd;
     if (!fMd) fMd = fSm;
     if (!fSm) fSm = fMd;
-    if (!fLg || !fMd || !fSm) return;  // no fonts at all – give up
+    if (!fLg || !fMd || !fSm) return;
 
     m_pixmap->Lock();
     m_pixmap->Fill(clrTransparent);
