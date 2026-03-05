@@ -17,7 +17,7 @@ VERSION = $(shell grep 'PLUGIN_VERSION' gstreamer.h | \
 #    $(shell PKG_CONFIG_PATH="$$PKG_CONFIG_PATH:../../.." \
 #            pkg-config --variable=$(1) vdr))
 
-#PKGCFG = $(if $(VDRDIR),$(shell pkg-config --variable=$(1) $(VDRDIR)/vdr.pc),$(shell PKG_CONFIG_PATH="$$PKG_CONFIG_PATH:../../.." pkg-config --variable=$(1) vdr))
+PKGCFG = $(if $(VDRDIR),$(shell pkg-config --variable=$(1) $(VDRDIR)/vdr.pc),$(shell PKG_CONFIG_PATH="$$PKG_CONFIG_PATH:../../.." pkg-config --variable=$(1) vdr))
 LIBDIR     = $(call PKGCFG,libdir)
 LOCDIR     = $(call PKGCFG,locdir)
 PLGCFG     = $(call PKGCFG,plgcfg)
