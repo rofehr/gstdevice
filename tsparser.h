@@ -1,29 +1,30 @@
 #pragma once
 
 /*
- * cTsParser
- * Reassembles PES frames from 188-byte MPEG-TS packets and extracts
- * the 33-bit PTS, converting it to GStreamer nanoseconds.
+ * tsparser.h  –  MPEG-TS PES reassembler with 33-bit PTS extraction
  *
- * One instance per elementary stream (video / audio).
- * Not thread-safe – callers must serialise access externally.
+ * One instance per elementary stream (video or audio).
+ * Feed 188-byte TS packets; the callback fires with each complete PES
+ * payload together with its PTS converted to GStreamer nanoseconds.
+ *
+ * NOT thread-safe – callers must hold a mutex around Feed()/Flush()/Reset().
  */
 
 #include <cstdint>
 #include <cstring>
 #include <functional>
 #include <vector>
-#include <gst/gst.h>   // for GST_CLOCK_TIME_NONE
+#include <gst/gst.h>    // GST_CLOCK_TIME_NONE
 
 static constexpr int     kTsPacketSize = 188;
-static constexpr uint8_t kTsSyncByte   = 0x47;
-static constexpr size_t  kPesBufMax    = 4 * 1024 * 1024;   // 4 MB
+static constexpr uint8_t kTsSyncByte   = 0x47u;
+static constexpr size_t  kPesBufMax    = 4u * 1024u * 1024u;  // 4 MB guard
 
-// Callback: (es_data, es_len, pts_in_nanoseconds)
-// pts == GST_CLOCK_TIME_NONE when no PTS present in PES header
+// Callback: payload pointer, byte length, PTS in nanoseconds
+// (PTS == GST_CLOCK_TIME_NONE when the PES header carries no PTS)
 using TsPayloadCb = std::function<void(const uint8_t *data, int len, uint64_t pts_ns)>;
 
-// ============================================================
+// ─────────────────────────────────────────────────────────────────────────────
 class cTsParser
 {
 public:
@@ -32,13 +33,14 @@ public:
         m_buf.reserve(256 * 1024);
     }
 
-    // Feed exactly one 188-byte TS packet
+    // Feed one 188-byte TS packet.
+    // Returns false only when the sync byte is missing (corrupt packet).
     bool Feed(const uint8_t *pkt, int len = kTsPacketSize);
 
-    // Dispatch pending PES buffer (call on channel switch / Clear)
+    // Dispatch the pending PES buffer (call before channel switch / Stop).
     void Flush();
 
-    // Discard all state without dispatching
+    // Discard buffered data without dispatching (call after seek/error).
     void Reset();
 
 private:
@@ -47,32 +49,34 @@ private:
     bool                 m_started = false;
 
     void     Dispatch();
-    uint64_t ExtractPts(const uint8_t *pes, int len);
+    uint64_t ExtractPts(const uint8_t *pes, int pesLen) const;
 };
 
-// ---- Inline implementation ----
+// ─────────────────────────────────────────────────────────────────────────────
+// Inline implementations
+// ─────────────────────────────────────────────────────────────────────────────
 
 inline bool cTsParser::Feed(const uint8_t *pkt, int len)
 {
     if (len < kTsPacketSize || pkt[0] != kTsSyncByte)
         return false;
 
-    bool pusi       = (pkt[1] & 0x40) != 0;
-    bool hasAdapt   = (pkt[3] & 0x20) != 0;
-    bool hasPayload = (pkt[3] & 0x10) != 0;
+    const bool pusi       = (pkt[1] & 0x40u) != 0;
+    const bool hasAdapt   = (pkt[3] & 0x20u) != 0;
+    const bool hasPayload = (pkt[3] & 0x10u) != 0;
 
     if (!hasPayload)
         return true;
 
-    int payloadOffset = 4;
+    int payloadOff = 4;
     if (hasAdapt) {
-        payloadOffset += 1 + pkt[4];
-        if (payloadOffset >= kTsPacketSize)
+        payloadOff += 1 + static_cast<int>(pkt[4]);
+        if (payloadOff >= kTsPacketSize)
             return true;
     }
 
-    const uint8_t *payload    = pkt + payloadOffset;
-    int            payloadLen = kTsPacketSize - payloadOffset;
+    const uint8_t *payload    = pkt + payloadOff;
+    const int      payloadLen = kTsPacketSize - payloadOff;
 
     if (pusi) {
         if (m_started && !m_buf.empty())
@@ -84,7 +88,7 @@ inline bool cTsParser::Feed(const uint8_t *pkt, int len)
     if (!m_started)
         return true;
 
-    if (m_buf.size() + payloadLen <= kPesBufMax)
+    if (m_buf.size() + static_cast<size_t>(payloadLen) <= kPesBufMax)
         m_buf.insert(m_buf.end(), payload, payload + payloadLen);
 
     return true;
@@ -92,19 +96,19 @@ inline bool cTsParser::Feed(const uint8_t *pkt, int len)
 
 inline void cTsParser::Dispatch()
 {
-    if (m_buf.size() < 9)
+    if (m_buf.size() < 9u)
         return;
 
     const uint8_t *pes = m_buf.data();
-    int            tot = static_cast<int>(m_buf.size());
+    const int      tot = static_cast<int>(m_buf.size());
 
-    // Verify PES start code 0x000001
-    if (pes[0] != 0x00 || pes[1] != 0x00 || pes[2] != 0x01)
+    // PES start code 0x000001
+    if (pes[0] != 0x00u || pes[1] != 0x00u || pes[2] != 0x01u)
         return;
 
-    uint64_t pts        = ExtractPts(pes, tot);
-    int      headerLen  = pes[8];
-    int      esOffset   = 9 + headerLen;
+    const uint64_t pts       = ExtractPts(pes, tot);
+    const int      headerLen = static_cast<int>(pes[8]);
+    const int      esOffset  = 9 + headerLen;
 
     if (esOffset >= tot)
         return;
@@ -126,24 +130,26 @@ inline void cTsParser::Reset()
     m_started = false;
 }
 
-inline uint64_t cTsParser::ExtractPts(const uint8_t *pes, int len)
+inline uint64_t cTsParser::ExtractPts(const uint8_t *pes, int pesLen) const
 {
-    if (len < 14)
+    // Need at least 14 bytes: 6 fixed + 3 optional + 5 PTS bytes
+    if (pesLen < 14)
         return GST_CLOCK_TIME_NONE;
 
-    uint8_t ptsDtsFlags = (pes[7] >> 6) & 0x03;
-    if (ptsDtsFlags == 0x00)
+    const uint8_t ptsDtsFlags = (pes[7] >> 6u) & 0x03u;
+    if (ptsDtsFlags == 0x00u)
         return GST_CLOCK_TIME_NONE;
 
-    const uint8_t *p = pes + 9;
+    const uint8_t *p = pes + 9;  // first byte of optional PES header fields
 
-    uint64_t pts90 =
-        (static_cast<uint64_t>(p[0] & 0x0E) << 29) |
-        (static_cast<uint64_t>(p[1])         << 22) |
-        (static_cast<uint64_t>(p[2] & 0xFE)  << 14) |
-        (static_cast<uint64_t>(p[3])          <<  7) |
-        (static_cast<uint64_t>(p[4] & 0xFE)   >>  1);
+    // ISO 13818-1 §2.4.3.7 – 33-bit PTS encoded in 5 bytes
+    const uint64_t pts90 =
+        (static_cast<uint64_t>(p[0] & 0x0Eu) << 29u) |
+        (static_cast<uint64_t>(p[1]         ) << 22u) |
+        (static_cast<uint64_t>(p[2] & 0xFEu) << 14u) |
+        (static_cast<uint64_t>(p[3]         ) <<  7u) |
+        (static_cast<uint64_t>(p[4] & 0xFEu) >>  1u);
 
-    // 90 kHz ticks → nanoseconds
+    // 90 kHz ticks → nanoseconds:  ns = pts90 * 1e9 / 90000 = pts90 * 100000 / 9
     return (pts90 * 100000ULL) / 9ULL;
 }

@@ -1,91 +1,91 @@
 #pragma once
 
-#include "gstreamer.h"
-#include "config.h"
+/*
+ * gstosd.h  –  Channel / EPG / stream-info banner
+ *
+ * Uses the native VDR cOsd / cPixmap TrueColour API.
+ * EPG is accessed via the LOCK_SCHEDULES_READ macro (VDR 2.4+).
+ */
 
-// ============================================================
-//  cGstOsd
-//  Info banner using the native VDR cOsd / cPixmap API.
-//
-//  Displays at the bottom of the screen:
-//    • Channel number + name + current time
-//    • EPG title, time range, progress bar
-//    • Video codec, resolution, fps + HW/SW badge
-//    • Audio codec, sample rate, channels
-//    • A/V offset, volume
-//    • Pipeline state
-//
-//  VDR 2.7.7 API used:
-//    cOsdProvider::NewOsd()      – create OSD object
-//    cOsd::SetAreas()            – register 32-bit TrueColor area
-//    cOsd::CreatePixmap()        – alpha-blended drawing surface
-//    cPixmap::DrawRectangle()    – filled rectangles / backgrounds
-//    cPixmap::DrawText()         – text with VDR theme fonts
-//    cFont::GetFont()            – theme fonts (fontOsd, fontSml)
-//    cOsd::Flush()               – submit to OSD provider
-//    LOCK_SCHEDULES_READ macro   – thread-safe EPG access (VDR 2.4+)
-// ============================================================
+#include "gstreamer.h"  // VDR system headers (cOsd, cFont, cThread …)
+#include "config.h"     // sGstStreamInfo, cGstConfig
+
+// ─────────────────────────────────────────────────────────────────────────────
 class cGstOsd : public cThread
 {
 public:
     cGstOsd();
     virtual ~cGstOsd() override;
 
+    // Show info banner for the given channel (reads EPG internally)
     void ShowForChannel(const cChannel *Channel);
+
+    // Toggle visibility
     void Toggle();
+
+    // Hide immediately
     void Hide();
+
+    // Refresh stream-info section without re-reading EPG
     void UpdateStreamInfo(const sGstStreamInfo &info);
+
+    // Set auto-hide delay (0 = never auto-hide)
     void SetTimeout(int seconds) { m_timeoutSec = seconds; }
 
     bool IsVisible() const { return m_visible.load(); }
 
 private:
-    virtual void Action() override;   // auto-hide timer
+    // cThread: auto-hide timer
+    virtual void Action() override;
 
     void Show();
     void Render();
     void Close();
 
-    void DrawBackground(cPixmap *pm, int w, int h);
-    void DrawChannelInfo(cPixmap *pm, int w, int &y,
-                         const cFont *fontLg, const cFont *fontSm);
-    void DrawEpgInfo(cPixmap *pm, int w, int &y, const cFont *font);
-    void DrawProgressBar(cPixmap *pm, int x, int y, int w, int h, double frac);
-    void DrawStreamInfo(cPixmap *pm, int w, int &y, const cFont *font);
+    // Drawing helpers
+    void DrawBackground  (cPixmap *pm, int w, int h);
+    void DrawChannelInfo (cPixmap *pm, int w, int &y,
+                          const cFont *fontLg, const cFont *fontMd);
+    void DrawEpgInfo     (cPixmap *pm, int w, int &y, const cFont *font);
+    void DrawProgressBar (cPixmap *pm, int x, int y, int w, int h, double frac);
+    void DrawStreamInfo  (cPixmap *pm, int w, int &y, const cFont *font);
     void DrawPipelineState(cPixmap *pm, int w, int &y, const cFont *font);
 
+    // VDR OSD objects
     cOsd    *m_osd    = nullptr;
     cPixmap *m_pixmap = nullptr;
 
+    // State
     std::atomic<bool> m_visible{false};
     std::mutex        m_mutex;
     int               m_timeoutSec = 5;
     time_t            m_showTime   = 0;
 
     // Content
-    int         m_channelNumber = 0;
-    std::string m_channelName;
-    std::string m_epgTitle;
-    std::string m_epgStart;
-    std::string m_epgStop;
-    double      m_epgProgress = 0.0;
+    int            m_channelNumber = 0;
+    std::string    m_channelName;
+    std::string    m_epgTitle;
+    std::string    m_epgStart;
+    std::string    m_epgStop;
+    double         m_epgProgress = 0.0;
 
-    sGstStreamInfo *m_streamInfo = nullptr;   // heap-allocated copy
+    sGstStreamInfo m_streamInfo;   // copy updated by UpdateStreamInfo()
 
-    // OSD geometry
-    int m_osdWidth = 0, m_osdHeight = 0;
+    // OSD panel geometry
+    int m_osdW = 0;
+    int m_osdH = 0;   // panel height = 22 % of screen
 
     // Colour palette (ARGB)
-    static constexpr tColor kBg       = 0xCC000000;
-    static constexpr tColor kBgAccent = 0xCC0D1B2A;
-    static constexpr tColor kText     = 0xFFFFFFFF;
-    static constexpr tColor kSubtext  = 0xFFAAAAAA;
-    static constexpr tColor kAccent   = 0xFF3FA7D6;
-    static constexpr tColor kBarFg    = 0xFF3FA7D6;
-    static constexpr tColor kBarBg    = 0xFF444444;
-    static constexpr tColor kHwBadge  = 0xFF27AE60;   // green  = VA-API
-    static constexpr tColor kSwBadge  = 0xFFE67E22;   // orange = Software
+    static constexpr tColor kBg       = 0xCC000000u;
+    static constexpr tColor kBgStripe = 0xCC0D1B2Au;
+    static constexpr tColor kText     = 0xFFFFFFFFu;
+    static constexpr tColor kSub      = 0xFFAAAAAAu;
+    static constexpr tColor kAccent   = 0xFF3FA7D6u;
+    static constexpr tColor kBarFg    = 0xFF3FA7D6u;
+    static constexpr tColor kBarBg    = 0xFF444444u;
+    static constexpr tColor kHwBadge  = 0xFF27AE60u;  // green  – VA-API
+    static constexpr tColor kSwBadge  = 0xFFE67E22u;  // orange – Software
 };
 
-// Global OSD singleton (created in cPluginGstreamer::Initialize)
+// Singleton – defined in gstreamer.cpp
 extern cGstOsd *GstOsd;

@@ -1,95 +1,84 @@
 #
-# Makefile for a Video Disk Recorder plugin
+# Makefile for vdr-plugin-gstreamer
 #
-# Based on: https://github.com/rofehr/gstreamerdevice/blob/kms/Makefile
-# Adapted for: vdr-plugin-gstreamer v0.3.0 (VDR >= 2.7.7, C++17)
+# Style based on: github.com/rofehr/gstreamerdevice (kms branch)
+# Requires: VDR >= 2.6.0, GStreamer >= 1.20, C++17
 #
 
-# The official plugin name (used in '-P gstreamer' VDR option)
-PLUGIN = gstreamer
+PLUGIN  = gstreamer
+VERSION = $(shell grep 'PLUGIN_VERSION' gstreamer.h | \
+            awk '{print $$3}' | sed 's/[";]//g')
 
-### Version is taken from the main header file
-VERSION = $(shell grep 'define PLUGIN_VERSION' gstreamer.h | awk '{ print $$3 }' | sed -e 's/[";]//g')
-
-### VDR build variable resolution via vdr.pc
-# If VDRDIR is set, use that vdr.pc; otherwise fall back to pkg-config search path.
-PKGCFG = $(if $(VDRDIR),$(shell pkg-config --variable=$(1) $(VDRDIR)/vdr.pc),\
-                         $(shell PKG_CONFIG_PATH="$$PKG_CONFIG_PATH:../../.." pkg-config --variable=$(1) vdr))
+### ── VDR paths via vdr.pc ──────────────────────────────────────────────────
+# Set VDRDIR to the directory containing vdr.pc, or leave unset to use
+# the system pkg-config search path.
+PKGCFG = $(if $(VDRDIR),\
+    $(shell pkg-config --variable=$(1) $(VDRDIR)/vdr.pc),\
+    $(shell PKG_CONFIG_PATH="$$PKG_CONFIG_PATH:../../.." \
+            pkg-config --variable=$(1) vdr))
 
 LIBDIR     = $(call PKGCFG,libdir)
 LOCDIR     = $(call PKGCFG,locdir)
 PLGCFG     = $(call PKGCFG,plgcfg)
+APIVERSION = $(call PKGCFG,apiversion)
 
 TMPDIR    ?= /tmp
 
-### Compiler flags come from vdr.pc (includes VDR APIVERSION defines etc.)
+### ── Compiler flags from vdr.pc ────────────────────────────────────────────
 export CFLAGS   = $(call PKGCFG,cflags)
 export CXXFLAGS = $(call PKGCFG,cxxflags) -std=c++17
 
-### VDR API version (appended to .so on install)
-APIVERSION = $(call PKGCFG,apiversion)
-
-### Allow user-defined options to override defaults
+### ── User overrides (plgcfg) ───────────────────────────────────────────────
 -include $(PLGCFG)
 
-### Archive / package names
-ARCHIVE = $(PLUGIN)-$(VERSION)
-PACKAGE = vdr-$(ARCHIVE)
-
-### Shared object filename
-SOFILE = libvdr-$(PLUGIN).so
-
-### -------------------------------------------------------------------
-### Includes and defines
-### -------------------------------------------------------------------
-
-GST_PKGS = gstreamer-1.0 \
-           gstreamer-app-1.0 \
-           gstreamer-video-1.0 \
+### ── GStreamer packages ─────────────────────────────────────────────────────
+GST_PKGS = gstreamer-1.0        \
+           gstreamer-app-1.0    \
+           gstreamer-video-1.0  \
            gstreamer-audio-1.0
 
 INCLUDES += $(shell pkg-config --cflags $(GST_PKGS))
+GST_LIBS  = $(shell pkg-config --libs   $(GST_PKGS))
+
 DEFINES  += -DPLUGIN_NAME_I18N='"$(PLUGIN)"'
 
-### -------------------------------------------------------------------
-### Object files
-### -------------------------------------------------------------------
+### ── Object files ──────────────────────────────────────────────────────────
 OBJS = gstreamer.o \
        gstdevice.o \
        gstosd.o    \
        setup.o
 
-### -------------------------------------------------------------------
-### Main target
-### -------------------------------------------------------------------
+### ── Archive names ─────────────────────────────────────────────────────────
+ARCHIVE = $(PLUGIN)-$(VERSION)
+PACKAGE = vdr-$(ARCHIVE)
+SOFILE  = libvdr-$(PLUGIN).so
+
+### ── Default target ────────────────────────────────────────────────────────
+.PHONY: all i18n install install-lib install-i18n dist clean
+
 all: $(SOFILE) i18n
 
-### -------------------------------------------------------------------
-### Compile rule
-### -------------------------------------------------------------------
+### ── Compile ────────────────────────────────────────────────────────────────
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c $(DEFINES) $(INCLUDES) -o $@ $<
 
-### -------------------------------------------------------------------
-### Automatic header dependencies
-### -------------------------------------------------------------------
+### ── Automatic header dependencies ─────────────────────────────────────────
 MAKEDEP = $(CXX) -MM -MG
 DEPFILE = .dependencies
 
 $(DEPFILE): Makefile
-	@$(MAKEDEP) $(CXXFLAGS) $(DEFINES) $(INCLUDES) $(OBJS:%.o=%.cpp) > $@
+	@$(MAKEDEP) $(CXXFLAGS) $(DEFINES) $(INCLUDES) \
+	    $(OBJS:%.o=%.cpp) > $@
 
 -include $(DEPFILE)
 
-### -------------------------------------------------------------------
-### Internationalization (I18N)
-### -------------------------------------------------------------------
+### ── I18N ───────────────────────────────────────────────────────────────────
 PODIR    = po
 I18Npo   = $(wildcard $(PODIR)/*.po)
-I18Nmo   = $(addsuffix .mo,$(foreach file,$(I18Npo),$(basename $(file))))
+I18Nmo   = $(addsuffix .mo,$(foreach f,$(I18Npo),$(basename $(f))))
 I18Nmsgs = $(addprefix $(DESTDIR)$(LOCDIR)/,\
              $(addsuffix /LC_MESSAGES/vdr-$(PLUGIN).mo,\
-               $(notdir $(foreach file,$(I18Npo),$(basename $(file))))))
+               $(notdir $(foreach f,$(I18Npo),$(basename $(f))))))
 I18Npot  = $(PODIR)/$(PLUGIN).pot
 
 %.mo: %.po
@@ -97,11 +86,11 @@ I18Npot  = $(PODIR)/$(PLUGIN).pot
 
 $(I18Npot): $(wildcard *.cpp *.h)
 	xgettext -C -cTRANSLATORS --no-wrap --no-location \
-	         -k -ktr -ktrNOOP \
-	         --package-name=vdr-$(PLUGIN) \
-	         --package-version=$(VERSION) \
-	         --msgid-bugs-address='<see README>' \
-	         -o $@ `ls $^`
+	    -k -ktr -ktrNOOP \
+	    --package-name=vdr-$(PLUGIN) \
+	    --package-version=$(VERSION) \
+	    --msgid-bugs-address='<see README>' \
+	    -o $@ $(wildcard *.cpp *.h)
 
 %.po: $(I18Npot)
 	msgmerge -U --no-wrap --no-location --backup=none -q -N $@ $<
@@ -110,50 +99,37 @@ $(I18Npot): $(wildcard *.cpp *.h)
 $(I18Nmsgs): $(DESTDIR)$(LOCDIR)/%/LC_MESSAGES/vdr-$(PLUGIN).mo: $(PODIR)/%.mo
 	install -D -m644 $< $@
 
-.PHONY: i18n
 i18n: $(I18Nmo) $(I18Npot)
 
 install-i18n: $(I18Nmsgs)
 
-### -------------------------------------------------------------------
-### Link
-### GStreamer libs resolved via pkg-config.
-### -------------------------------------------------------------------
-GST_LIBS = $(shell pkg-config --libs $(GST_PKGS))
-
+### ── Link ───────────────────────────────────────────────────────────────────
 $(SOFILE): $(OBJS)
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) -shared $(OBJS) \
-	       $(GST_LIBS) \
-	       -lgobject-2.0 -lglib-2.0 \
-	       -o $@
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -shared \
+	    $(OBJS) \
+	    $(GST_LIBS) \
+	    -lgobject-2.0 -lglib-2.0 \
+	    -o $@
 
-### -------------------------------------------------------------------
-### Install
-### The plugin .so is installed with the VDR API version suffix, as
-### required by VDR's plugin loader:
-###   /usr/lib/vdr/plugins/libvdr-gstreamer.so.<apiversion>
-### -------------------------------------------------------------------
+### ── Install ────────────────────────────────────────────────────────────────
+# VDR requires the plugin .so to carry the API version as a suffix:
+#   /usr/lib/vdr/plugins/libvdr-gstreamer.so.<apiversion>
 install-lib: $(SOFILE)
-	install -D $^ $(DESTDIR)$(LIBDIR)/$^.$(APIVERSION)
+	install -D $< $(DESTDIR)$(LIBDIR)/$(SOFILE).$(APIVERSION)
 
 install: install-lib install-i18n
 
-### -------------------------------------------------------------------
-### Distribution tarball
-### -------------------------------------------------------------------
+### ── Distribution tarball ───────────────────────────────────────────────────
 dist: $(I18Npo) clean
 	@-rm -rf $(TMPDIR)/$(ARCHIVE)
-	@mkdir $(TMPDIR)/$(ARCHIVE)
+	@mkdir   $(TMPDIR)/$(ARCHIVE)
 	@cp -a * $(TMPDIR)/$(ARCHIVE)
 	@tar czf $(PACKAGE).tgz -C $(TMPDIR) $(ARCHIVE)
 	@-rm -rf $(TMPDIR)/$(ARCHIVE)
-	@echo Distribution package created as $(PACKAGE).tgz
+	@echo "Distribution: $(PACKAGE).tgz"
 
-### -------------------------------------------------------------------
-### Clean
-### -------------------------------------------------------------------
+### ── Clean ──────────────────────────────────────────────────────────────────
 clean:
+	@-rm -f $(OBJS) $(DEPFILE) $(SOFILE)
 	@-rm -f $(PODIR)/*.mo $(PODIR)/*.pot
-	@-rm -f $(OBJS) $(DEPFILE) *.so *.tgz core* *~
-
-.PHONY: all install install-lib install-i18n dist clean
+	@-rm -f *.tgz core* *~

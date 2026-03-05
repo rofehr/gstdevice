@@ -1,32 +1,32 @@
 #pragma once
 
+/*
+ * setup.h  –  VDR plugin setup page
+ *
+ * VDR 2.6+ API used:
+ *   cMenuEditStrItem(name, buf, len)   – no 'allowed' charset parameter
+ *   cMenuEditStraItem                  – string-array selector (unchanged)
+ *   cMenuEditBoolItem / cMenuEditIntItem – unchanged
+ */
+
 #include <vdr/menuitems.h>
 #include "config.h"
 
-// ============================================================
-//  cGstMenuSetup – plugin setup page (VDR OSD)
-//
-//  VDR 2.7.7 API notes:
-//    • cMenuEditStrItem no longer takes an 'allowed' character
-//      set parameter – the signature is now:
-//        cMenuEditStrItem(const char *Name, char *Value, int Length)
-//    • cMenuEditStraItem is unchanged
-//    • cMenuEditBoolItem, cMenuEditIntItem unchanged
-// ============================================================
+// ─────────────────────────────────────────────────────────────────────────────
 class cGstMenuSetup : public cMenuSetupPage
 {
 public:
     cGstMenuSetup();
 
 protected:
-    virtual void    Store() override;
+    virtual void     Store() override;
     virtual eOSState ProcessKey(eKeys Key) override;
 
 private:
     void BuildMenu();
     void RebuildIfNeeded();
 
-    // Local working copies committed on Store()
+    // Working copies – committed to GstConfig only on Store()
     int  m_videoCodec;
     int  m_hwDecode;
     int  m_audioCodec;
@@ -36,7 +36,7 @@ private:
     char m_videoSink[64];
     char m_audioSink[64];
 
-    // Change detection for live menu rebuild
+    // Change-detection for live menu rebuild
     int  m_prevVideoCodec;
     int  m_prevHwDecode;
 
