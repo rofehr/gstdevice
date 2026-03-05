@@ -85,6 +85,7 @@ I18Npot  = $(PODIR)/$(PLUGIN).pot
 	msgfmt -c -o $@ $<
 
 $(I18Npot): $(wildcard *.cpp *.h)
+	@mkdir -p $(PODIR)
 	xgettext -C -cTRANSLATORS --no-wrap --no-location \
 	    --from-code=UTF-8 \
 	    -k -ktr -ktrNOOP \
