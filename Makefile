@@ -116,9 +116,13 @@ $(SOFILE): $(OBJS)
 ### -- Install ----------------------------------------------------------------
 # VDR requires the plugin .so to carry the API version as a suffix:
 #   /usr/lib/vdr/plugins/libvdr-gstreamer.so.<apiversion>
-install-lib: $(SOFILE)
-	install -D $< $(DESTDIR)$(LIBDIR)/$(SOFILE).$(APIVERSION)
+#install-lib: $(SOFILE)
+#	install -D $< $(DESTDIR)$(LIBDIR)/$(SOFILE)
 
+install-lib: $(SOFILE)
+	@echo IN $(DESTDIR)$(LIBDIR)/$<
+	install -D $^ $(DESTDIR)$(LIBDIR)/$^.$(APIVERSION)
+	
 install: install-lib install-i18n
 
 ### -- Distribution tarball ---------------------------------------------------
