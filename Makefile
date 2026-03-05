@@ -26,7 +26,7 @@ TMPDIR    ?= /tmp
 
 ### -- Compiler flags from vdr.pc --------------------------------------------
 export CFLAGS   = $(call PKGCFG,cflags)
-export CXXFLAGS = $(call PKGCFG,cxxflags) -std=c++17
+export CXXFLAGS = $(call PKGCFG,cxxflags) -std=c++17 -fPIC 
 
 ### -- User overrides (plgcfg) -----------------------------------------------
 -include $(PLGCFG)
