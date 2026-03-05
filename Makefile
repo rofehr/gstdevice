@@ -17,6 +17,7 @@ VERSION = $(shell grep 'PLUGIN_VERSION' gstreamer.h | \
 #    $(shell PKG_CONFIG_PATH="$$PKG_CONFIG_PATH:../../.." \
 #            pkg-config --variable=$(1) vdr))
 
+PKGCFG = $(if $(VDRDIR),$(shell pkg-config --variable=$(1) $(VDRDIR)/vdr.pc),$(shell PKG_CONFIG_PATH="$$PKG_CONFIG_PATH:../../.." pkg-config --variable=$(1) vdr))
 LIBDIR     = $(call PKGCFG,libdir)
 LOCDIR     = $(call PKGCFG,locdir)
 PLGCFG     = $(call PKGCFG,plgcfg)
@@ -27,6 +28,8 @@ TMPDIR    ?= /tmp
 ### -- Compiler flags from vdr.pc --------------------------------------------
 export CFLAGS   = $(call PKGCFG,cflags)
 export CXXFLAGS = $(call PKGCFG,cxxflags) -std=c++17 -fPIC 
+
+APIVERSION = $(call PKGCFG,apiversion)
 
 ### -- User overrides (plgcfg) -----------------------------------------------
 -include $(PLGCFG)
