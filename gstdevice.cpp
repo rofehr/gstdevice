@@ -617,7 +617,7 @@ eOSState cGstDevice::ProcessKey(eKeys Key)
     case kInfo:
         QueryAndUpdateStreamInfo();
         GstOsd->Toggle();
-        return osConsumed;
+        return osContinue;
     default:
         return osUnknown;
     }
